@@ -485,9 +485,9 @@ class OptimistFiTools(Toolkit):
         """Get US House stock-trade disclosures filed under the STOCK Act, by ticker or by member, newest first.
         Each record names the account the trade was made in (account), so two records alike in all else are trades
         in two accounts; account_not_read marks one whose account is not read yet. Amounts are the filing's range:
-        an exact amount is both bounds, and "Over $X" has amount_high null. event_time is the trade date and as_of
-        the date the filing became public; disclosure_date is the notification date the filing gives, which is
-        earlier.
+        an exact amount is both bounds, and "Over $X" has amount_high null. event_time is the trade date;
+        disclosure_date (and as_of) is the date the filing became public; notification_date is the date the filing
+        says the member was notified of the trade.
 
         Args:
             ticker: A stock ticker: which members traded it.
@@ -502,9 +502,9 @@ class OptimistFiTools(Toolkit):
         """Get US House stock-trade disclosures filed under the STOCK Act, by ticker or by member, newest first.
         Each record names the account the trade was made in (account), so two records alike in all else are trades
         in two accounts; account_not_read marks one whose account is not read yet. Amounts are the filing's range:
-        an exact amount is both bounds, and "Over $X" has amount_high null. event_time is the trade date and as_of
-        the date the filing became public; disclosure_date is the notification date the filing gives, which is
-        earlier.
+        an exact amount is both bounds, and "Over $X" has amount_high null. event_time is the trade date;
+        disclosure_date (and as_of) is the date the filing became public; notification_date is the date the filing
+        says the member was notified of the trade.
 
         Args:
             ticker: A stock ticker: which members traded it.
