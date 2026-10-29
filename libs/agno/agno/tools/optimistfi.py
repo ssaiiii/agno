@@ -554,8 +554,10 @@ class OptimistFiTools(Toolkit):
         return await self._acall("get_filings", entity=company, kind=kind, start=start_date, end=end_date, limit=limit)
 
     def get_company_calendar(self, company: str, limit: int = 12) -> str:
-        """Get what is ahead for a US company, nearest first: the next earnings date projected from its own filing
-        cadence, marked as an estimate with its basis, and clinical trial readouts.
+        """Get what is ahead for a US company: the next earnings date projected from its own filing cadence, marked
+        as an estimate with its basis, first, then clinical trial readouts, nearest first. When more readouts are due
+        than the limit holds, later-phase studies are kept; a readout's data.date_precision is "month" when
+        ClinicalTrials.gov gives only the month of completion (event_time is then the 1st).
 
         Args:
             company: A ticker (AAPL, BRK.B), a company name (Apple) or an SEC CIK.
@@ -564,8 +566,10 @@ class OptimistFiTools(Toolkit):
         return self._call("get_calendar", entity=company, limit=limit)
 
     async def aget_company_calendar(self, company: str, limit: int = 12) -> str:
-        """Get what is ahead for a US company, nearest first: the next earnings date projected from its own filing
-        cadence, marked as an estimate with its basis, and clinical trial readouts.
+        """Get what is ahead for a US company: the next earnings date projected from its own filing cadence, marked
+        as an estimate with its basis, first, then clinical trial readouts, nearest first. When more readouts are due
+        than the limit holds, later-phase studies are kept; a readout's data.date_precision is "month" when
+        ClinicalTrials.gov gives only the month of completion (event_time is then the 1st).
 
         Args:
             company: A ticker (AAPL, BRK.B), a company name (Apple) or an SEC CIK.
