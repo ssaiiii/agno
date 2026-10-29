@@ -217,20 +217,73 @@ def test_unreadable_body_returns_an_error(mock_client_class):
     assert json.loads(tools.get_perp("BTC")) == {"error": "OptimistFi returned a response that is not JSON"}
 
 
-@patch("agno.tools.optimistfi.httpx.Client")
-def test_http_error_preserves_status(mock_client_class):
+def status_response(code: int, text: str) -> MagicMock:
     request = httpx.Request("POST", ENDPOINT)
     response = MagicMock(spec=httpx.Response)
-    response.status_code = 503
-    response.text = "error code: 1102"
+    response.status_code = code
+    response.text = text
+    response.raise_for_status.side_effect = httpx.HTTPStatusError(text, request=request, response=response)
+    return response
+
+
+@patch("agno.tools.optimistfi.httpx.Client")
+def test_http_error_preserves_status(mock_client_class):
     client = mock_client_class.return_value.__enter__.return_value
-    client.post.return_value = response
-    response.raise_for_status.side_effect = httpx.HTTPStatusError("unavailable", request=request, response=response)
+    client.post.return_value = status_response(404, "not found")
     tools = OptimistFiTools()
 
     result = json.loads(tools.get_perp("BTC"))
 
-    assert result == {"error": "OptimistFi request failed", "status_code": 503, "detail": "error code: 1102"}
+    assert result == {"error": "OptimistFi request failed", "status_code": 404, "detail": "not found"}
+    assert client.post.call_count == 1
+
+
+@patch("agno.tools.optimistfi.time.sleep")
+@patch("agno.tools.optimistfi.httpx.Client")
+def test_a_restart_gap_is_retried_once(mock_client_class, sleep):
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.text = tool_reply({"result": [{"market": "BTC"}]})
+    ok.raise_for_status.return_value = None
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [status_response(502, "bad gateway"), ok]
+    tools = OptimistFiTools()
+
+    assert json.loads(tools.get_perp("BTC")) == {"result": [{"market": "BTC"}]}
+    sleep.assert_called_once_with(5.0)
+
+
+@patch("agno.tools.optimistfi.time.sleep")
+@patch("agno.tools.optimistfi.httpx.Client")
+def test_a_server_still_restarting_says_so(mock_client_class, _sleep):
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.return_value = status_response(503, "error code: 1102")
+    tools = OptimistFiTools()
+
+    result = json.loads(tools.get_perp("BTC"))
+
+    assert result == {
+        "error": "OptimistFi's server did not answer on two tries 5 seconds apart. It sends this status while it "
+        "restarts, which takes a few minutes.",
+        "status_code": 503,
+    }
+    assert client.post.call_count == 2
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.optimistfi.asyncio.sleep", new_callable=AsyncMock)
+@patch("agno.tools.optimistfi.httpx.AsyncClient")
+async def test_an_async_restart_gap_is_retried_once(mock_client_class, sleep):
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.text = tool_reply({"result": [{"market": "ETH"}]})
+    ok.raise_for_status.return_value = None
+    client = mock_client_class.return_value.__aenter__.return_value
+    client.post = AsyncMock(side_effect=[status_response(504, "timeout"), ok])
+    tools = OptimistFiTools()
+
+    assert json.loads(await tools.aget_perp("ETH")) == {"result": [{"market": "ETH"}]}
+    sleep.assert_awaited_once_with(5.0)
 
 
 @patch("agno.tools.optimistfi.httpx.Client")

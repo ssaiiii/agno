@@ -1,4 +1,8 @@
+"""OptimistFi tools for Agno agents: perpetual futures, crypto prop firms and US company disclosures."""
+
+import asyncio
 import json
+import time
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import httpx
@@ -121,6 +125,9 @@ class OptimistFiTools(Toolkit):
 
     # The endpoint speaks MCP's streamable HTTP transport: a JSON-RPC request in, the reply as a server-sent event.
     _HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    # A gateway status is what the server sends while it restarts; one retry rides out a short gap.
+    _GATEWAY = frozenset({502, 503, 504})
+    _RETRY_SECONDS = 5.0
 
     @staticmethod
     def _payload(tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -173,14 +180,13 @@ class OptimistFiTools(Toolkit):
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(self.base_url, headers=self._HEADERS, json=self._payload(tool, arguments))
+                if response.status_code in self._GATEWAY:
+                    time.sleep(self._RETRY_SECONDS)
+                    response = client.post(self.base_url, headers=self._HEADERS, json=self._payload(tool, arguments))
                 response.raise_for_status()
                 return self._parse(response.text)
         except httpx.HTTPStatusError as error:
-            return {
-                "error": "OptimistFi request failed",
-                "status_code": error.response.status_code,
-                "detail": error.response.text[:500],
-            }
+            return self._status_error(error)
         except httpx.RequestError as error:
             return {"error": "OptimistFi request failed", "detail": str(error)}
         except ValueError:
@@ -190,18 +196,31 @@ class OptimistFiTools(Toolkit):
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(self.base_url, headers=self._HEADERS, json=self._payload(tool, arguments))
+                if response.status_code in self._GATEWAY:
+                    await asyncio.sleep(self._RETRY_SECONDS)
+                    response = await client.post(
+                        self.base_url, headers=self._HEADERS, json=self._payload(tool, arguments)
+                    )
                 response.raise_for_status()
                 return self._parse(response.text)
         except httpx.HTTPStatusError as error:
-            return {
-                "error": "OptimistFi request failed",
-                "status_code": error.response.status_code,
-                "detail": error.response.text[:500],
-            }
+            return self._status_error(error)
         except httpx.RequestError as error:
             return {"error": "OptimistFi request failed", "detail": str(error)}
         except ValueError:
             return {"error": "OptimistFi returned a response that is not JSON"}
+
+    @classmethod
+    def _status_error(cls, error: httpx.HTTPStatusError) -> Dict[str, Any]:
+        code = error.response.status_code
+        if code in cls._GATEWAY:
+            return {
+                "error": "OptimistFi's server did not answer on two tries "
+                f"{cls._RETRY_SECONDS:.0f} seconds apart. It sends this status while it restarts, "
+                "which takes a few minutes.",
+                "status_code": code,
+            }
+        return {"error": "OptimistFi request failed", "status_code": code, "detail": error.response.text[:500]}
 
     def get_perp(self, market: str) -> str:
         """Get one perpetual futures market across venues right now: price and premium to the index or stock,
@@ -427,9 +446,11 @@ class OptimistFiTools(Toolkit):
         end_date: Optional[str] = None,
         limit: int = 25,
     ) -> str:
-        """Get a US company's Form 4 insider transactions from SEC EDGAR, newest first: who, role, transaction
-        code, shares and dollar value. Each record's event_time is the trade date and as_of is the filing date,
-        when the trade became public.
+        """Get a US company's Form 4 insider transactions from SEC EDGAR: who, role, what they did (direction and
+        transaction, with the Form 4 code in txn_code), shares and dollar value. Open-market buys and sells come
+        first, then grants, option exercises, tax withholding and gifts, newest first within each group, so with a
+        small limit a recent gift can sit below older sales. Each record's event_time is the trade date and as_of
+        is the filing date, when the trade became public.
 
         Args:
             company: A ticker (AAPL, BRK.B), a company name (Apple) or an SEC CIK.
@@ -446,9 +467,11 @@ class OptimistFiTools(Toolkit):
         end_date: Optional[str] = None,
         limit: int = 25,
     ) -> str:
-        """Get a US company's Form 4 insider transactions from SEC EDGAR, newest first: who, role, transaction
-        code, shares and dollar value. Each record's event_time is the trade date and as_of is the filing date,
-        when the trade became public.
+        """Get a US company's Form 4 insider transactions from SEC EDGAR: who, role, what they did (direction and
+        transaction, with the Form 4 code in txn_code), shares and dollar value. Open-market buys and sells come
+        first, then grants, option exercises, tax withholding and gifts, newest first within each group, so with a
+        small limit a recent gift can sit below older sales. Each record's event_time is the trade date and as_of
+        is the filing date, when the trade became public.
 
         Args:
             company: A ticker (AAPL, BRK.B), a company name (Apple) or an SEC CIK.
@@ -460,6 +483,11 @@ class OptimistFiTools(Toolkit):
 
     def get_congress_trades(self, ticker: Optional[str] = None, member: Optional[str] = None, limit: int = 25) -> str:
         """Get US House stock-trade disclosures filed under the STOCK Act, by ticker or by member, newest first.
+        Each record names the account the trade was made in (account), so two records alike in all else are trades
+        in two accounts; account_not_read marks one whose account is not read yet. Amounts are the filing's range:
+        an exact amount is both bounds, and "Over $X" has amount_high null. event_time is the trade date and as_of
+        the date the filing became public; disclosure_date is the notification date the filing gives, which is
+        earlier.
 
         Args:
             ticker: A stock ticker: which members traded it.
@@ -472,6 +500,11 @@ class OptimistFiTools(Toolkit):
         self, ticker: Optional[str] = None, member: Optional[str] = None, limit: int = 25
     ) -> str:
         """Get US House stock-trade disclosures filed under the STOCK Act, by ticker or by member, newest first.
+        Each record names the account the trade was made in (account), so two records alike in all else are trades
+        in two accounts; account_not_read marks one whose account is not read yet. Amounts are the filing's range:
+        an exact amount is both bounds, and "Over $X" has amount_high null. event_time is the trade date and as_of
+        the date the filing became public; disclosure_date is the notification date the filing gives, which is
+        earlier.
 
         Args:
             ticker: A stock ticker: which members traded it.
